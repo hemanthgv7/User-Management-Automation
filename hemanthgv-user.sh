@@ -1,19 +1,13 @@
 #!/bin/bash
-# This script creates new users and adds them to groups automatically.
-# Each line in the input file should look like this:
-# username;group1,group2
-# Example:
-# light; sudo,dev,www-data
+# ============================================
+# Script Name: hemanthgv-user.sh
+# Purpose: Automatically create users and groups
+# Author: Hemanth GV
+# ============================================
 
-# Check if the script is run as root
-if [ "$EUID" -ne 0 ]; then
-  echo "Please run as root (use sudo)."
-  exit 1
-fi
-
-# Check if an input file is given
+# Check if an input file is provided
 if [ -z "$1" ]; then
-  echo "Usage: sudo ./create_users.sh users.txt"
+  echo "Usage: sudo ./hemanthgv-user.sh users.txt"
   exit 1
 fi
 
@@ -21,68 +15,70 @@ INPUT_FILE="$1"
 LOG_FILE="/var/log/user_management.log"
 PASSWORD_FILE="/var/secure/user_passwords.txt"
 
-# Make sure the log and password files exist and are protected
-mkdir -p /var/secure
-> "$LOG_FILE"
-> "$PASSWORD_FILE"
-chmod 600 "$LOG_FILE" "$PASSWORD_FILE"
+# Create necessary folders and files
+sudo mkdir -p /var/secure
+sudo touch "$LOG_FILE" "$PASSWORD_FILE"
+sudo chmod 600 "$LOG_FILE" "$PASSWORD_FILE"
 
-# Function to log messages with time
-log() {
-  echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG_FILE"
-}
+echo "Starting user creation process..."
+echo "-----------------------------------"
 
-# Function to generate a random 12-character password
-generate_password() {
-  tr -dc 'A-Za-z0-9' </dev/urandom | head -c 12
-}
+# Read the file line by line
+while IFS=';' read -r username groups; do
 
-# Read the input file line by line
-while IFS= read -r line; do
-  # Skip empty lines and comments
-  [[ -z "$line" || "$line" == \#* ]] && continue
-
-  # Split line into username and groups
-  username=$(echo "$line" | cut -d';' -f1 | xargs)
-  groups=$(echo "$line" | cut -d';' -f2 | tr -d ' ')
-
-  # Skip if username is empty
-  if [ -z "$username" ]; then
-    log "Skipping line with empty username."
+  # Skip comments and empty lines
+  if [[ "$username" =~ ^#.*$ || -z "$username" ]]; then
     continue
   fi
 
-  # Create groups if they don’t exist
-  IFS=',' read -r -a group_list <<< "$groups"
-  for group in "${group_list[@]}"; do
-    if [ -n "$group" ] && ! getent group "$group" >/dev/null; then
-      groupadd "$group"
-      log "Created group: $group"
-    fi
-  done
+  # Remove hidden Windows characters and spaces
+  username=$(echo "$username" | tr -d '\r' | xargs)
+  groups=$(echo "$groups" | tr -d '\r' | xargs)
 
-  # Create the user if not exists
+  echo "Processing user: $username"
+
+  # Check if user already exists
   if id "$username" &>/dev/null; then
-    log "User $username already exists."
-  else
-    useradd -m -s /bin/bash "$username"
-    log "Created user: $username"
+    echo "User $username already exists, skipping." | tee -a "$LOG_FILE"
+    continue
   fi
 
-  # Add user to groups
-  for group in "${group_list[@]}"; do
-    if [ -n "$group" ]; then
-      usermod -aG "$group" "$username"
-      log "Added $username to group $group"
+  # Create user with home directory
+  sudo useradd -m "$username"
+  echo "User $username created." | tee -a "$LOG_FILE"
+
+  # Handle group creation and assignment
+  IFS=',' read -ra group_array <<< "$groups"
+  for group in "${group_array[@]}"; do
+    group=$(echo "$group" | xargs)
+    if [ -z "$group" ]; then
+      continue
     fi
+
+    # Create group if it doesn't exist
+    if ! getent group "$group" >/dev/null; then
+      sudo groupadd "$group"
+      echo "Created group: $group" | tee -a "$LOG_FILE"
+    fi
+
+    # Add user to group
+    sudo usermod -aG "$group" "$username"
+    echo "Added $username to group $group" | tee -a "$LOG_FILE"
   done
 
-  # Generate password and set it
-  password=$(generate_password)
-  echo "$username:$password" | chpasswd
-  echo "$username:$password" >> "$PASSWORD_FILE"
-  log "Set password for user: $username"
+  # Generate random 12-character password
+  PASSWORD=$(openssl rand -base64 12)
+
+  # Set password for the user
+  echo "$username:$PASSWORD" | sudo chpasswd
+  echo "Password set for $username" | tee -a "$LOG_FILE"
+
+  # Save credentials
+  echo "$username : $PASSWORD" | sudo tee -a "$PASSWORD_FILE" >/dev/null
 
 done < "$INPUT_FILE"
 
-echo "All users processed successfully! Check $LOG_FILE and $PASSWORD_FILE for details."
+echo "-----------------------------------"
+echo "All users processed successfully!"
+echo "Check log: $LOG_FILE"
+echo "Check passwords: $PASSWORD_FILE"

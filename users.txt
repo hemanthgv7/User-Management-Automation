@@ -1,3 +1,4 @@
-light; sudo,dev,www-data
-siyoni; sudo
-gv; dev,www-data
+# Developer Accounts
+light;sudo,dev,www-data
+favour;sudo
+lawrence;dev,www-data
